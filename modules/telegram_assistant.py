@@ -22,13 +22,44 @@ VPS_SERVERS = {
         "name": "vmi2959779",
         "host": "156.67.31.7",
         "user": "alann",
+        "prometheus": "http://172.18.0.15:9090",  # Internal Docker IP
         "aliases": ["principal", "main", "luxia", "1", "vmi2959779"]
     },
     "well-e": {
         "name": "well-e",
         "host": "66.94.109.219",
         "user": "welle",
+        "prometheus": None,  # No Prometheus on this server yet
         "aliases": ["well-e", "welle", "nutricion", "2", "vmi2672708"]
+    }
+}
+
+# Prometheus metric queries
+PROMETHEUS_QUERIES = {
+    "cpu": {
+        "query": '100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)',
+        "label": "CPU",
+        "unit": "%"
+    },
+    "memory": {
+        "query": '100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))',
+        "label": "RAM",
+        "unit": "%"
+    },
+    "disk": {
+        "query": '100 - ((node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100)',
+        "label": "Disco",
+        "unit": "%"
+    },
+    "network_in": {
+        "query": 'rate(node_network_receive_bytes_total{device="eth0"}[5m]) / 1024',
+        "label": "Net In",
+        "unit": "KB/s"
+    },
+    "network_out": {
+        "query": 'rate(node_network_transmit_bytes_total{device="eth0"}[5m]) / 1024',
+        "label": "Net Out",
+        "unit": "KB/s"
     }
 }
 
@@ -44,7 +75,12 @@ get_status, get_resources, list_containers, run_report, security_check,
 unban_ip, ban_ip, whitelist_ip, list_banned, backup_container, list_backups,
 restore_backup, container_stats, start_container, stop_container,
 pull_and_update, docker_prune, docker_compose_status, restart_container,
-get_logs, top_processes
+get_logs, top_processes, metrics_history
+
+MÉTRICAS HISTÓRICAS (metrics_history):
+- Muestra gráficos ASCII de CPU, RAM, disco o red
+- Parámetros: metric (cpu/memory/disk/network), hours (1-48), server
+- Ejemplo: {"tool": "metrics_history", "params": {"metric": "cpu", "hours": 6}}
 
 ESTILO DE RESPUESTA:
 - Sé DIRECTO: responde la pregunta inmediatamente, sin preámbulos
@@ -534,6 +570,93 @@ class TelegramAssistant:
         else:
             return f"❌ Error obteniendo logs: {output}"
 
+    # ===== METRICS HISTORY (Prometheus) =====
+
+    def tool_metrics_history(self, metric: str = "cpu", hours: int = 6, server: str = "principal") -> str:
+        """Get historical metrics from Prometheus with ASCII chart"""
+
+        # Validate metric type
+        metric = metric.lower()
+        if metric not in PROMETHEUS_QUERIES:
+            return f"❌ Métrica no válida. Opciones: {', '.join(PROMETHEUS_QUERIES.keys())}"
+
+        # Get Prometheus URL for this server
+        prometheus_url = VPS_SERVERS.get(server, {}).get("prometheus")
+        if not prometheus_url:
+            return f"❌ Prometheus no configurado para *{server}*"
+
+        # Calculate time range
+        end_time = int(time.time())
+        start_time = end_time - (hours * 3600)
+        step = max(300, (hours * 3600) // 12)  # At least 5 min, max 12 points
+
+        query_info = PROMETHEUS_QUERIES[metric]
+
+        # Query Prometheus via SSH (since it's internal Docker network)
+        cmd = f'''curl -s "{prometheus_url}/api/v1/query_range?query={query_info["query"]}&start={start_time}&end={end_time}&step={step}"'''
+
+        success, output = self.run_ssh_command(server, cmd, timeout=15)
+
+        if not success or not output:
+            return f"❌ Error consultando Prometheus: {output or 'sin respuesta'}"
+
+        try:
+            data = json.loads(output)
+            if data.get("status") != "success":
+                return f"❌ Error de Prometheus: {data.get('error', 'desconocido')}"
+
+            results = data.get("data", {}).get("result", [])
+            if not results:
+                return f"❌ Sin datos de {metric} para las últimas {hours}h"
+
+            values = results[0].get("values", [])
+            if not values:
+                return f"❌ Sin valores de {metric}"
+
+            # Build ASCII chart
+            max_val = max(float(v[1]) for v in values) if values else 100
+            min_val = min(float(v[1]) for v in values) if values else 0
+
+            chart_lines = [f"📊 *{query_info['label']}* últimas {hours}h ({VPS_SERVERS[server]['name']})"]
+            chart_lines.append(f"━━━━━━━━━━━━━━━━━━━━━━━━")
+
+            for ts, val in values:
+                t = datetime.fromtimestamp(float(ts)).strftime('%H:%M')
+                v = float(val)
+
+                # Normalize bar length (0-10)
+                if max_val > 0:
+                    bar_len = int((v / 100) * 10) if query_info["unit"] == "%" else int((v / max_val) * 10)
+                else:
+                    bar_len = 0
+                bar_len = max(0, min(10, bar_len))
+
+                # Color based on value (for percentages)
+                if query_info["unit"] == "%":
+                    if v >= 90:
+                        bar = "🔴" * bar_len + "⬜" * (10 - bar_len)
+                    elif v >= 70:
+                        bar = "🟡" * bar_len + "⬜" * (10 - bar_len)
+                    else:
+                        bar = "🟢" * bar_len + "⬜" * (10 - bar_len)
+                else:
+                    bar = "🔵" * bar_len + "⬜" * (10 - bar_len)
+
+                chart_lines.append(f"`{t}` {bar} `{v:.1f}{query_info['unit']}`")
+
+            # Add summary
+            avg_val = sum(float(v[1]) for v in values) / len(values)
+            chart_lines.append(f"━━━━━━━━━━━━━━━━━━━━━━━━")
+            chart_lines.append(f"📈 Promedio: `{avg_val:.1f}{query_info['unit']}`  Min: `{min_val:.1f}`  Max: `{max_val:.1f}`")
+            chart_lines.append(f"\n¿Ver otra métrica? (cpu/memory/disk/network)")
+
+            return "\n".join(chart_lines)
+
+        except json.JSONDecodeError as e:
+            return f"❌ Error parseando respuesta: {str(e)[:50]}"
+        except Exception as e:
+            return f"❌ Error: {str(e)[:100]}"
+
     # ===== DOCKER ADVANCED TOOLS =====
 
     def tool_backup_container(self, container: str, server: str = "principal") -> str:
@@ -894,6 +1017,8 @@ Para completar la actualización, recrea el contenedor con docker-compose o los 
             "top_processes": self.tool_top_processes,
             "restart_container": self.tool_restart_container,
             "get_logs": self.tool_get_logs,
+            # Metrics history
+            "metrics_history": self.tool_metrics_history,
             # Docker advanced
             "backup_container": self.tool_backup_container,
             "list_backups": self.tool_list_backups,
