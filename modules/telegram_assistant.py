@@ -121,10 +121,10 @@ Nunca dejes una respuesta sin sugerir el siguiente paso."""
 class TelegramAssistant:
     """AI-powered Telegram assistant for Guardian"""
 
-    def __init__(self, bot_token: str, chat_id: str, anthropic_key: str, logger=None):
+    def __init__(self, bot_token: str, chat_id: str, api_key: str, logger=None):
         self.bot_token = bot_token
         self.chat_id = str(chat_id)
-        self.anthropic_key = anthropic_key
+        self.api_key = api_key  # Gemini API key
         self.logger = logger
 
         self.api_url = f"https://api.telegram.org/bot{bot_token}"
@@ -947,38 +947,52 @@ Para completar la actualización, recrea el contenedor con docker-compose o los 
 
     # ===== AI PROCESSING =====
 
-    def call_claude(self, user_message: str) -> Dict:
-        """Call Claude API to process user message"""
+    def call_llm(self, user_message: str) -> Dict:
+        """Call Gemini API to process user message"""
         try:
-            # Build conversation context
-            messages = []
+            # Build conversation context for Gemini
+            contents = []
 
-            # Add recent history (last 5 exchanges)
+            # Add system prompt as first user message (Gemini style)
+            contents.append({
+                "role": "user",
+                "parts": [{"text": f"INSTRUCCIONES DEL SISTEMA:\n{SYSTEM_PROMPT}\n\n---\nResponde OK si entendiste."}]
+            })
+            contents.append({
+                "role": "model",
+                "parts": [{"text": "OK, entendido. Soy Guardian, listo para ayudarte con tu infraestructura."}]
+            })
+
+            # Add recent history
             for msg in self.conversation_history[-10:]:
-                messages.append(msg)
+                role = "user" if msg["role"] == "user" else "model"
+                contents.append({
+                    "role": role,
+                    "parts": [{"text": msg["content"]}]
+                })
 
             # Add current message
-            messages.append({"role": "user", "content": user_message})
+            contents.append({
+                "role": "user",
+                "parts": [{"text": user_message}]
+            })
 
             response = requests.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": self.anthropic_key,
-                    "content-type": "application/json",
-                    "anthropic-version": "2023-06-01"
-                },
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={self.api_key}",
+                headers={"Content-Type": "application/json"},
                 json={
-                    "model": "claude-sonnet-4-20250514",
-                    "max_tokens": 1024,
-                    "system": SYSTEM_PROMPT,
-                    "messages": messages
+                    "contents": contents,
+                    "generationConfig": {
+                        "temperature": 0.7,
+                        "maxOutputTokens": 1024
+                    }
                 },
                 timeout=30
             )
 
             if response.ok:
                 data = response.json()
-                content = data.get("content", [{}])[0].get("text", "{}")
+                content = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "{}")
 
                 # Parse JSON response
                 try:
@@ -992,11 +1006,11 @@ Para completar la actualización, recrea el contenedor con docker-compose o los 
                 # Fallback: return as message only
                 return {"message": content, "actions": []}
             else:
-                self.log("error", f"Claude API error: {response.text}")
+                self.log("error", f"Gemini API error: {response.text}")
                 return {"message": "Error procesando tu mensaje. Intenta de nuevo.", "actions": []}
 
         except Exception as e:
-            self.log("error", f"Claude call failed: {e}")
+            self.log("error", f"Gemini call failed: {e}")
             return {"message": f"Error: {e}", "actions": []}
 
     def execute_action(self, action: Dict) -> str:
@@ -1058,7 +1072,7 @@ Para completar la actualización, recrea el contenedor con docker-compose o los 
                 return "👍 Cancelado. ¿En qué más puedo ayudarte?"
 
         # Call Claude to understand intent
-        response = self.call_claude(message)
+        response = self.call_llm(message)
 
         # Update conversation history
         self.conversation_history.append({"role": "user", "content": message})
@@ -1206,13 +1220,13 @@ def main():
 
     bot_token = config.get_secret("telegram_bot_token")
     chat_id = config.get("notifications.telegram.chat_id")
-    anthropic_key = config.get("anthropic_api_key") or config.get_secret("anthropic_api_key")
+    gemini_key = config.get("gemini_api_key") or config.get_secret("gemini_api_key")
 
-    if not all([bot_token, chat_id, anthropic_key]):
-        print("Error: Missing configuration (telegram token, chat_id, or anthropic key)")
+    if not all([bot_token, chat_id, gemini_key]):
+        print("Error: Missing configuration (telegram token, chat_id, or gemini key)")
         sys.exit(1)
 
-    assistant = TelegramAssistant(bot_token, chat_id, anthropic_key, logger)
+    assistant = TelegramAssistant(bot_token, chat_id, gemini_key, logger)
 
     try:
         assistant.start()
