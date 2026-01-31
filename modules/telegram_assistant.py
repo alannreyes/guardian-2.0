@@ -332,13 +332,30 @@ class TelegramAssistant:
 
     def tool_run_report(self, server: str = "principal") -> str:
         """Run full security report"""
-        cmd = "sudo /opt/luxia/guardian/venv/bin/python /opt/luxia/guardian/guardian.py run 2>&1 | tail -5"
-        success, output = self.run_ssh_command(server, cmd, timeout=120)
-
-        if success:
-            return f"✅ Reporte generado para *{server}*. Revisa tu email y Telegram."
+        # Run locally if on principal (where assistant runs)
+        if server == "principal":
+            try:
+                result = subprocess.run(
+                    ["/opt/luxia/guardian/venv/bin/python", "/opt/luxia/guardian/guardian.py", "run"],
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
+                if result.returncode == 0:
+                    return "✅ Reporte generado. Revisa tu Telegram y email.\n\n¿Quieres un scan de seguridad más detallado?"
+                else:
+                    return f"❌ Error: {result.stderr[:200]}"
+            except subprocess.TimeoutExpired:
+                return "❌ Timeout generando reporte (>2 min)"
+            except Exception as e:
+                return f"❌ Error: {str(e)[:100]}"
         else:
-            return f"❌ Error generando reporte: {output}"
+            cmd = "sudo /opt/luxia/guardian/venv/bin/python /opt/luxia/guardian/guardian.py run 2>&1 | tail -5"
+            success, output = self.run_ssh_command(server, cmd, timeout=120)
+            if success:
+                return f"✅ Reporte generado para *{server}*. Revisa tu email y Telegram.\n\n¿Necesitas algo más?"
+            else:
+                return f"❌ Error generando reporte: {output}"
 
     def tool_security_check(self, server: str = "all") -> str:
         """Quick security scan"""

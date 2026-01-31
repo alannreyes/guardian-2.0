@@ -288,26 +288,43 @@ Respond with JSON:
 
         safe_data = self._sanitize_data(report_data)
 
-        prompt = f"""Generate a VERY BRIEF executive summary in Spanish for this server security report.
+        prompt = f"""Analiza este reporte de seguridad y genera un resumen ejecutivo MUY BREVE.
 
-REPORT DATA:
+DATOS:
 {json.dumps(safe_data, indent=2)}
 
-FORMAT REQUIRED (exactly 3 bullet points, one line each):
-• [Score and status - e.g., "Puntuación 85/100 - Estado bueno"]
-• [Key finding - positive or negative]
-• [Action needed OR "Sin acciones pendientes"]
+RESPONDE SOLO CON 3 LÍNEAS en este formato exacto (sin JSON, sin markdown):
+• Puntuación X/100 - Estado [bueno/regular/crítico]
+• [Hallazgo principal - positivo o negativo]
+• [Acción necesaria O "Sin acciones pendientes"]
 
-RULES:
-- Maximum 3 bullet points
-- Each bullet max 80 characters
-- Use bullets (•) not dashes
-- Spanish language
-- No markdown, no bold, just plain text
-- Be direct and actionable"""
+Ejemplo de respuesta correcta:
+• Puntuación 85/100 - Estado bueno
+• 12 contenedores activos, sin amenazas detectadas
+• Sin acciones pendientes"""
 
         response = self._call_llm(prompt)
-        return response if response else self._generate_static_summary(report_data)
+
+        if not response:
+            return self._generate_static_summary(report_data)
+
+        # Post-process: if LLM returned JSON, extract the summary
+        if '```' in response or '{' in response:
+            parsed = self._parse_json_response(response)
+            if parsed:
+                # Try to extract readable summary from JSON
+                if 'executive_summary_spanish' in parsed:
+                    return parsed['executive_summary_spanish']
+                elif 'summary' in parsed:
+                    return parsed['summary']
+                elif 'executive_summary' in parsed:
+                    return parsed['executive_summary']
+            # If JSON but no summary field, generate static
+            return self._generate_static_summary(report_data)
+
+        # Clean up any markdown formatting
+        response = response.replace('**', '').replace('`', '').strip()
+        return response
 
     def _fallback_analysis(
         self,
