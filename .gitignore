@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+
+# Secrets (NUNCA subir)
+secrets/
+*.key
+*.pem
+config.yaml
+
+# Data local
+data/
+*.db
+*.sqlite
+
+# Logs
+logs/
+*.log
+
+# Quarantine
+quarantine/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backups
+*.bak
+*.backup

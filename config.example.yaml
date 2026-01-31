@@ -1,0 +1,223 @@
+# =============================================================================
+# LUXIA GUARDIAN 2.0 - Configuration File
+# =============================================================================
+# Copy this file to config.yaml and adjust values for your environment
+# File permissions should be 640 (root:guardian)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Server Identification
+# -----------------------------------------------------------------------------
+server:
+  name: "vmi2959779"                    # Friendly name for this server
+  environment: "production"              # production, staging, development
+  timezone: "America/Lima"
+  critical_services:                     # Services that should NOT be auto-stopped
+    - traefik
+    - prometheus
+    - loki
+    - grafana
+
+# -----------------------------------------------------------------------------
+# Monitoring Thresholds
+# -----------------------------------------------------------------------------
+thresholds:
+  cpu:
+    warning: 70
+    critical: 90
+  memory:
+    warning: 75
+    critical: 90
+  disk:
+    warning: 70
+    critical: 85
+  load_average_multiplier: 2             # Alert if load > (CPUs * this value)
+
+# -----------------------------------------------------------------------------
+# Sentinel Configuration (Real-time monitoring daemon)
+# -----------------------------------------------------------------------------
+sentinel:
+  enabled: true
+  check_interval_seconds: 300            # Normal hours: every 5 minutes
+  maintenance_window:
+    start_hour: 1                        # 1 AM
+    end_hour: 5                          # 5 AM
+    check_interval_seconds: 60           # During maintenance: every 1 minute
+
+  # What to monitor
+  monitors:
+    cpu_spike: true
+    memory_spike: true
+    suspicious_processes: true
+    mining_connections: true
+    new_executables_tmp: true
+    container_anomalies: true
+    failed_logins: true
+
+# -----------------------------------------------------------------------------
+# IOC (Indicators of Compromise) Configuration
+# -----------------------------------------------------------------------------
+ioc:
+  update_interval_hours: 24              # How often to update IOC feeds
+  update_hour: 2                         # Hour to run updates (2 AM)
+
+  feeds:
+    threatfox:
+      enabled: true
+      url: "https://threatfox-api.abuse.ch/api/v1/"
+
+    abuseipdb:
+      enabled: true
+      api_key: ""                        # Get from https://www.abuseipdb.com/
+
+    blocklist_de:
+      enabled: true
+      url: "https://lists.blocklist.de/lists/all.txt"
+
+    feodo:
+      enabled: true
+      url: "https://feodotracker.abuse.ch/downloads/ipblocklist_recommended.txt"
+
+  # Known mining pool ports
+  mining_ports:
+    - 3333
+    - 4444
+    - 5555
+    - 6666
+    - 7777
+    - 8888
+    - 9999
+    - 14444
+    - 14433
+    - 45700
+
+  # Suspicious process name patterns (regex)
+  suspicious_process_patterns:
+    - '^\\..*'                           # Hidden files (.something)
+    - 'xmrig'
+    - 'xmr-stak'
+    - 'minerd'
+    - 'minergate'
+    - 'kswapd0'                          # Common miner disguise
+    - 'ld-linux'                         # Common miner disguise
+    - 'watchdog'                         # When not legitimate
+    - '\\/tmp\\/.*'                      # Executables in /tmp
+
+# -----------------------------------------------------------------------------
+# LLM Configuration (Claude for intelligent analysis)
+# -----------------------------------------------------------------------------
+llm:
+  enabled: true
+  provider: "anthropic"
+  model: "claude-sonnet-4-20250514"        # Fast and cost-effective
+
+  # Analysis settings
+  analysis:
+    min_confidence_for_action: 0.85      # Minimum confidence to auto-remediate
+    max_tokens: 1000
+    temperature: 0.1                     # Low temperature for consistent analysis
+
+  # What to analyze with LLM
+  use_for:
+    anomaly_analysis: true
+    signal_correlation: true
+    ioc_enrichment: true
+    remediation_decisions: true
+    daily_summary: true
+
+# -----------------------------------------------------------------------------
+# Notifications
+# -----------------------------------------------------------------------------
+notifications:
+  # Email via SendGrid
+  email:
+    enabled: true
+    provider: "sendgrid"
+    from: "guardian@luxia.us"
+    to:
+      - "alann@luxia.us"
+    # Only for these severity levels
+    levels:
+      - critical
+      - emergency
+
+  # Telegram
+  telegram:
+    enabled: true
+    bot_token: ""                        # Get from @BotFather
+    chat_id: ""                          # Your chat/group ID
+    phone: "+51993131883"                # For reference
+    levels:
+      - warning
+      - critical
+      - emergency
+
+  # Future: Webhook
+  webhook:
+    enabled: false
+    url: ""
+    headers: {}
+    levels:
+      - critical
+      - emergency
+
+# -----------------------------------------------------------------------------
+# Auto-Remediation
+# -----------------------------------------------------------------------------
+remediation:
+  enabled: true
+
+  # Actions that can be taken automatically
+  allowed_actions:
+    kill_process: true
+    stop_container: true
+    block_ip: true                       # Add to iptables
+
+  # Never auto-remediate these (require manual intervention)
+  protected_containers:
+    - traefik
+    - prometheus
+    - grafana
+    - loki
+    - portainer
+
+  # Quarantine instead of delete
+  quarantine_path: "/opt/luxia/guardian/quarantine"
+
+# -----------------------------------------------------------------------------
+# Reporting
+# -----------------------------------------------------------------------------
+reporting:
+  daily_report:
+    enabled: true
+    hour: 4                              # 4 AM
+    minute: 30
+    format: "pdf"
+    keep_days: 30
+
+  # Send report even if everything is OK?
+  send_if_healthy: true
+
+# -----------------------------------------------------------------------------
+# Integration with existing services
+# -----------------------------------------------------------------------------
+integrations:
+  prometheus:
+    enabled: true
+    url: "http://localhost:9090"
+
+  grafana:
+    enabled: true
+    url: "http://localhost:3000"
+    user: "admin"
+    password: ""                         # Set in secrets
+
+# -----------------------------------------------------------------------------
+# Secrets (API Keys) - Will be loaded from separate encrypted file
+# -----------------------------------------------------------------------------
+secrets_file: "/opt/luxia/guardian/secrets/keys.yaml"
+
+# For backward compatibility, can also be set directly (not recommended):
+# anthropic_api_key: ""
+# sendgrid_api_key: ""
+# telegram_bot_token: ""

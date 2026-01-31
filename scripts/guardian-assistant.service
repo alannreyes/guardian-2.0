@@ -1,0 +1,29 @@
+[Unit]
+Description=Luxia Guardian AI Assistant (Telegram)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+Group=guardian
+WorkingDirectory=/opt/luxia/guardian
+ExecStart=/opt/luxia/guardian/venv/bin/python /opt/luxia/guardian/modules/telegram_assistant.py
+Restart=always
+RestartSec=10
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=guardian-assistant
+
+# Security
+NoNewPrivileges=false
+ProtectSystem=false
+ProtectHome=false
+
+[Install]
+WantedBy=multi-user.target
